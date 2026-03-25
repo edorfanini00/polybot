@@ -88,7 +88,7 @@ async function discoverMarkets(): Promise<void> {
       }
 
       try {
-        const mRes = await fetch(`https://gamma-api.polymarket.com/markets?id=${r.conditionId}`);
+        const mRes = await fetch(`https://gamma-api.polymarket.com/markets?condition_id=${r.conditionId}`);
         if (!mRes.ok) continue;
         const mData = (await mRes.json()) as any[];
         const m = mData[0];
