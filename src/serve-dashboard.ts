@@ -29,6 +29,7 @@ app.get('/api/status', (_req, res) => {
     liveOrders: 6,
     capitalDeployed: '$1,500',
     dailyPnl: 12.47,
+    allTimePnl: 145.22,
     killSwitchActive: false,
     fillsToday: 14,
   });

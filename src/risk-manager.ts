@@ -12,6 +12,7 @@ const COMPONENT = 'Risk';
 export class RiskManager {
   private config: BotConfig;
   private dailyPnl: number = 0;
+  private allTimePnl: number = 0;
   private fills: FillEvent[] = [];
   private lastFillTime: number = 0;
   private killSwitchActive: boolean = false;
@@ -84,7 +85,8 @@ export class RiskManager {
    */
   addToPnl(amount: number, reason: string): void {
     this.dailyPnl += amount;
-    logger.info(COMPONENT, `💰 P&L update: ${amount >= 0 ? '+' : ''}$${amount.toFixed(4)} (${reason}) → Daily: $${this.dailyPnl.toFixed(2)}`);
+    this.allTimePnl += amount;
+    logger.info(COMPONENT, `💰 P&L update: ${amount >= 0 ? '+' : ''}$${amount.toFixed(4)} (${reason}) → Daily: $${this.dailyPnl.toFixed(2)} | All-Time: $${this.allTimePnl.toFixed(2)}`);
   }
 
   /**
@@ -155,6 +157,10 @@ export class RiskManager {
 
   getDailyPnl(): number {
     return this.dailyPnl;
+  }
+
+  getAllTimePnl(): number {
+    return this.allTimePnl;
   }
 
   getFillCount(): number {

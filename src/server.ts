@@ -53,6 +53,7 @@ export class DashboardServer {
         liveOrders: stats['Live Orders'],
         capitalDeployed: stats['Capital Deployed'],
         dailyPnl: this.riskManager.getDailyPnl(),
+        allTimePnl: this.riskManager.getAllTimePnl(),
         killSwitchActive: this.riskManager.isKillSwitchActive(),
         fillsToday: this.riskManager.getFillCount(),
       });
