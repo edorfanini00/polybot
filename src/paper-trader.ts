@@ -218,6 +218,7 @@ function startServer(): void {
   app.get('/api/status', (_req, res) => {
     const totalCapital = markets.length * CAPITAL_PER_MARKET;
     res.json({
+      mode: 'paper',
       uptime: Date.now() - startedAt,
       isDryRun: true,
       activeMarkets: markets.length,

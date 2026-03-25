@@ -47,6 +47,7 @@ export class DashboardServer {
       const risk = this.riskManager.getStatus();
       
       res.json({
+        mode: 'live',
         uptime: Date.now() - this.startedAt,
         isDryRun: this.config.dryRun,
         activeMarkets: stats['Active Markets'],

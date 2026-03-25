@@ -380,16 +380,28 @@
                   Polybot Engine
                 </h1>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '2px' }}>
-                  Liquidity Provision & Market Making
+                  {status?.mode === 'paper' ? 'Paper Trading — Simulated fills, real market data' : 'Live Trading — Real orders on Polymarket'}
                 </p>
               </div>
             </div>
             
-            {status?.isDryRun && (
-              <div className="pill" style={{ background: 'rgba(255, 255, 255, 0.1)', color: 'var(--text-primary)', border: '1px solid #333' }}>
-                Dry Run Mode
-              </div>
-            )}
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              {status?.mode === 'paper' && (
+                <div className="pill" style={{ background: 'rgba(59, 130, 246, 0.15)', color: 'var(--accent-blue)', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+                  📄 Paper Trading
+                </div>
+              )}
+              {status?.mode === 'live' && !status?.isDryRun && (
+                <div className="pill" style={{ background: 'var(--accent-green-bg)', color: 'var(--accent-green)', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+                  ⚡ Live
+                </div>
+              )}
+              {status?.isDryRun && status?.mode !== 'paper' && (
+                <div className="pill" style={{ background: 'rgba(255, 255, 255, 0.1)', color: 'var(--text-primary)', border: '1px solid #333' }}>
+                  Dry Run Mode
+                </div>
+              )}
+            </div>
           </header>
 
           {error ? (
