@@ -8,6 +8,7 @@
 // 4. Monitor via WebSocket + dashboard
 // 5. Graceful shutdown on SIGINT/SIGTERM
 
+import 'dotenv/config';
 import { loadConfig } from './config';
 import { PolymarketClient } from './client';
 import { MarketDiscovery } from './market-discovery';
@@ -15,6 +16,7 @@ import { Strategy } from './strategy';
 import { RiskManager } from './risk-manager';
 import { PolymarketWebSocket } from './websocket';
 import { Monitor } from './monitor';
+import { DashboardServer } from './server';
 import { logger, setLogLevel } from './logger';
 import { BotConfig } from './types';
 
@@ -33,6 +35,7 @@ class Bot {
   private riskManager!: RiskManager;
   private webSocket!: PolymarketWebSocket;
   private monitor!: Monitor;
+  private server!: DashboardServer;
   private tickTimer: NodeJS.Timeout | null = null;
   private rediscoveryTimer: NodeJS.Timeout | null = null;
   private running: boolean = false;
@@ -139,9 +142,12 @@ class Bot {
         }
       }, REDISCOVERY_INTERVAL_MS);
 
-      // ── Step 8: Start Monitor Dashboard ──
+      // ── Step 8: Start Monitor & Server ──
       this.monitor = new Monitor(this.strategy, this.riskManager, this.config);
-      this.monitor.startDashboard(30000); // Update every 30 seconds
+      this.monitor.startDashboard(30000); // Terminal output every 30s
+      
+      this.server = new DashboardServer(this.strategy, this.riskManager, this.config);
+      this.server.start();
 
       // Send startup alert
       await this.monitor.sendAlert(
