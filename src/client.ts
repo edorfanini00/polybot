@@ -6,21 +6,39 @@
 
 import { ClobClient } from '@polymarket/clob-client';
 import { ethers } from 'ethers';
+import { detectClobSigningFromChain, polygonJsonRpc } from './polymarket-proxy';
 import { BotConfig, Market, MarketToken, OrderBook, MidpointInfo, ActiveOrder, RewardConfig } from './types';
 import { logger } from './logger';
 
 const COMPONENT = 'Client';
+
+/** Polymarket SDKs expect ethers v5-style `_signTypedData`; ethers v6 uses `signTypedData`. */
+function clobSignerFromWallet(wallet: ethers.Wallet) {
+  return {
+    getAddress: () => wallet.getAddress(),
+    _signTypedData: (domain: ethers.TypedDataDomain, types: Record<string, ethers.TypedDataField[]>, value: Record<string, unknown>) =>
+      wallet.signTypedData(domain, types, value),
+  };
+}
+
+/** USDC.e on Polygon — Polymarket collateral (docs) */
+const POLYGON_USDC_E = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
 
 export class PolymarketClient {
   private client!: ClobClient;
   private config: BotConfig;
   private wallet: ethers.Wallet;
   private apiCreds: any = null;
+  private clobSigner: ReturnType<typeof clobSignerFromWallet>;
+  /** Address that holds USDC / outcome tokens for trading (proxy/Safe or EOA) */
+  private tradingAddress: string;
 
   constructor(config: BotConfig) {
     this.config = config;
     this.wallet = new ethers.Wallet(config.privateKey);
-    logger.info(COMPONENT, `Wallet address: ${this.wallet.address}`);
+    this.clobSigner = clobSignerFromWallet(this.wallet);
+    this.tradingAddress = this.wallet.address;
+    logger.info(COMPONENT, `Signer (private key) address: ${this.wallet.address}`);
   }
 
   async initialize(): Promise<void> {
@@ -47,14 +65,48 @@ export class PolymarketClient {
       }
     }
 
-    // Step 3: Create authenticated client
+    // Step 3: Resolve signature type + funder (AUTO = on-chain Gnosis proxy check)
+    let signatureType = this.config.clobSignatureType;
+    let funderAddress = this.config.funderAddress;
+    if (signatureType === null) {
+      try {
+        const detected = await detectClobSigningFromChain(this.wallet.address, this.config.polygonRpcUrl);
+        signatureType = detected.signatureType;
+        funderAddress = detected.funderAddress;
+        logger.info(
+          COMPONENT,
+          `Using Polymarket Gnosis Safe layout: maker/funder ${detected.funderAddress} (POLY_GNOSIS_SAFE). Set POLY_SIGNATURE_TYPE=EOA if you trade from a raw MetaMask address, or POLY_PROXY + FUNDER for email login.`
+        );
+      } catch (err: any) {
+        logger.error(
+          COMPONENT,
+          `CLOB signing auto-detect failed: ${err?.message || err}. Set POLYGON_RPC_URL, or set POLY_SIGNATURE_TYPE and FUNDER_ADDRESS manually.`
+        );
+        throw err;
+      }
+    }
+
     this.client = new ClobClient(
       this.config.clobApiHost,
       this.config.chainId,
-      this.wallet as any,
-      this.apiCreds
+      this.clobSigner as any,
+      this.apiCreds,
+      signatureType,
+      funderAddress
     );
 
+    this.tradingAddress = funderAddress ? ethers.getAddress(funderAddress) : this.wallet.address;
+    logger.info(
+      COMPONENT,
+      `Trading wallet (USDC.e balance / maker): ${this.tradingAddress}${this.tradingAddress.toLowerCase() === this.wallet.address.toLowerCase() ? '' : ` · signer ${this.wallet.address}`}`
+    );
+
+    const sigLabel = ['EOA', 'POLY_PROXY', 'POLY_GNOSIS_SAFE'][signatureType] ?? String(signatureType);
+    if (funderAddress) {
+      logger.info(COMPONENT, `Order signing: ${sigLabel}, funder/maker: ${funderAddress}`);
+    } else {
+      logger.info(COMPONENT, `Order signing: ${sigLabel} (maker = signer)`);
+    }
     logger.info(COMPONENT, '✅ Client initialized and authenticated');
   }
 
@@ -269,10 +321,8 @@ export class PolymarketClient {
 
   async getPositions(): Promise<any[]> {
     try {
-      // The data API provides position info
-      const response = await fetch(
-        `https://data-api.polymarket.com/positions?user=${this.wallet.address}`,
-      );
+      const user = this.getTradingAddress();
+      const response = await fetch(`https://data-api.polymarket.com/positions?user=${user}`);
       if (!response.ok) return [];
       return (await response.json()) as any[];
     } catch {
@@ -284,6 +334,26 @@ export class PolymarketClient {
 
   getWalletAddress(): string {
     return this.wallet.address;
+  }
+
+  /** Maker / Polymarket profile address — use for balances and deposits */
+  getTradingAddress(): string {
+    return this.tradingAddress;
+  }
+
+  /** On-chain USDC.e (bridged) balance for the trading wallet */
+  async fetchUsdcBalance(): Promise<number | null> {
+    if (this.config.chainId !== 137) return null;
+    const usdc = ethers.getAddress(POLYGON_USDC_E).toLowerCase();
+    const iface = new ethers.Interface(['function balanceOf(address account) view returns (uint256)']);
+    const data = iface.encodeFunctionData('balanceOf', [this.getTradingAddress()]);
+    try {
+      const raw = await polygonJsonRpc(this.config.polygonRpcUrl, 'eth_call', [{ to: usdc, data }, 'latest']);
+      const [v] = iface.decodeFunctionResult('balanceOf', raw);
+      return parseFloat(ethers.formatUnits(v, 6));
+    } catch {
+      return null;
+    }
   }
 
   getWebSocketUrl(): string {

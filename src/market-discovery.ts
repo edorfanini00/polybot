@@ -68,6 +68,7 @@ export class MarketDiscovery {
           slug: marketData.slug || '',
           active: true,
           closed: false,
+          negRisk: Boolean(marketData.neg_risk ?? marketData.negRisk),
           tokens,
           rewardPool: reward.rewardsDaily,
           tags: marketData.tags || [],

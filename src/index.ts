@@ -146,7 +146,7 @@ class Bot {
       this.monitor = new Monitor(this.strategy, this.riskManager, this.config);
       this.monitor.startDashboard(30000); // Terminal output every 30s
       
-      this.server = new DashboardServer(this.strategy, this.riskManager, this.config);
+      this.server = new DashboardServer(this.strategy, this.riskManager, this.config, this.client);
       this.server.start();
 
       // Send startup alert

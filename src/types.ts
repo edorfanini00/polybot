@@ -8,6 +8,12 @@ export interface BotConfig {
   clobApiHost: string;
   gammaApiHost: string;
   chainId: number;
+  /** null = auto-detect (Gnosis proxy vs EOA) at client init */
+  clobSignatureType: number | null;
+  /** Proxy/safe address (maker); required for explicit types 1 and 2 */
+  funderAddress?: string;
+  /** Used to read Safe factory for auto-detect */
+  polygonRpcUrl: string;
 
   // Strategy
   maxMarkets: number;
@@ -37,6 +43,8 @@ export interface Market {
   slug: string;
   active: boolean;
   closed: boolean;
+  /** True for neg-risk markets; required when posting signed CLOB orders */
+  negRisk?: boolean;
   tokens: MarketToken[];
   rewardPool?: number;
   estimatedApr?: number;

@@ -78,6 +78,9 @@ export class Monitor {
     console.log('  📈 MARKETS');
     for (const [conditionId, alloc] of allocations) {
       const liveOrders = alloc.activeOrders.filter(o => o.status === 'LIVE').length;
+      const liveBuyUsdc = alloc.activeOrders
+        .filter(o => o.status === 'LIVE' && o.side === 'BUY')
+        .reduce((s, o) => s + o.size, 0);
       const mid = alloc.midpoint ? `$${alloc.midpoint.mid.toFixed(3)}` : 'N/A';
       const reward = alloc.market.rewardPool ? `$${alloc.market.rewardPool.toFixed(0)}/day` : 'N/A';
       
@@ -86,7 +89,7 @@ export class Monitor {
         '      Midpoint': mid,
         '      Orders': `${liveOrders} live`,
         '      Reward Pool': reward,
-        '      Capital': `$${alloc.capitalAllocated}`,
+        '      USDC in live bids': `$${liveBuyUsdc.toFixed(2)} (target $${alloc.capitalAllocated})`,
       });
     }
 

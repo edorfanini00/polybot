@@ -3,6 +3,7 @@
 // ============================================
 
 import 'dotenv/config';
+import { getAddress, isAddress } from 'ethers';
 import { BotConfig, LogLevel } from './types';
 
 function requireEnv(key: string): string {
@@ -31,13 +32,41 @@ function boolEnv(key: string, defaultValue: boolean): boolean {
   return val.toLowerCase() === 'true' || val === '1';
 }
 
+/** CLOB order signature: null=AUTO, 0 EOA, 1 Magic proxy, 2 Gnosis Safe */
+function clobSignatureTypeEnv(): number | null {
+  const rawEnv = process.env.POLY_SIGNATURE_TYPE ?? process.env.CLOB_SIGNATURE_TYPE;
+  if (rawEnv === undefined || rawEnv.trim() === '') return null;
+  const raw = rawEnv.trim().toUpperCase();
+  if (raw === 'AUTO') return null;
+  if (raw === '0' || raw === 'EOA') return 0;
+  if (raw === '1' || raw === 'POLY_PROXY' || raw === 'PROXY') return 1;
+  if (raw === '2' || raw === 'POLY_GNOSIS_SAFE' || raw === 'GNOSIS' || raw === 'SAFE') return 2;
+  const n = parseInt(raw, 10);
+  if (n === 0 || n === 1 || n === 2) return n;
+  throw new Error(
+    `POLY_SIGNATURE_TYPE must be AUTO, 0/EOA, 1/POLY_PROXY, or 2/POLY_GNOSIS_SAFE, got: ${rawEnv}`
+  );
+}
+
+function optionalAddressEnv(key: string): string | undefined {
+  const v = process.env[key]?.trim();
+  if (!v) return undefined;
+  if (!isAddress(v)) throw new Error(`${key} must be a valid Ethereum address, got: ${v}`);
+  return getAddress(v);
+}
+
 export function loadConfig(): BotConfig {
+  const sigType = clobSignatureTypeEnv();
   const config: BotConfig = {
     // API
     privateKey: requireEnv('PRIVATE_KEY'),
     clobApiHost: optionalEnv('CLOB_API_HOST', 'https://clob.polymarket.com'),
     gammaApiHost: optionalEnv('GAMMA_API_HOST', 'https://gamma-api.polymarket.com'),
     chainId: numEnv('CHAIN_ID', 137),
+    clobSignatureType: sigType,
+    funderAddress:
+      sigType === null || sigType === 0 ? undefined : optionalAddressEnv('FUNDER_ADDRESS'),
+    polygonRpcUrl: optionalEnv('POLYGON_RPC_URL', 'https://polygon-bor-rpc.publicnode.com').trim(),
 
     // Strategy
     maxMarkets: numEnv('MAX_MARKETS', 5),
@@ -69,6 +98,17 @@ export function loadConfig(): BotConfig {
   }
   if (config.capitalPerMarket < config.orderSize * 2) {
     throw new Error(`CAPITAL_PER_MARKET (${config.capitalPerMarket}) must be at least 2x ORDER_SIZE (${config.orderSize})`);
+  }
+
+  if (sigType === 1 || sigType === 2) {
+    if (!config.funderAddress) {
+      throw new Error(
+        'FUNDER_ADDRESS is required when POLY_SIGNATURE_TYPE is 1 (POLY_PROXY) or 2 (POLY_GNOSIS_SAFE). Use the Polymarket profile / proxy wallet address that holds your balance.'
+      );
+    }
+  }
+  if (config.chainId !== 137 && sigType === null) {
+    throw new Error('POLY_SIGNATURE_TYPE=AUTO (default) is only supported on Polygon mainnet (CHAIN_ID=137). Set POLY_SIGNATURE_TYPE explicitly for other chains.');
   }
 
   return config;

@@ -8,7 +8,7 @@
 
 import { PolymarketClient } from './client';
 import { RiskManager } from './risk-manager';
-import { BotConfig, MarketAllocation, ActiveOrder, MidpointInfo, FillEvent } from './types';
+import { BotConfig, MarketAllocation, ActiveOrder, MidpointInfo, FillEvent, Position } from './types';
 import { RankedMarket } from './market-discovery';
 import { logger } from './logger';
 
@@ -19,6 +19,9 @@ export class Strategy {
   private riskManager: RiskManager;
   private config: BotConfig;
   private allocations: Map<string, MarketAllocation> = new Map();
+  private lastReconcileAt: number = 0;
+  private reconcileIntervalMs: number = 60_000;
+  private tokenToConditionId: Map<string, string> = new Map();
 
   constructor(client: PolymarketClient, riskManager: RiskManager, config: BotConfig) {
     this.client = client;
@@ -30,6 +33,7 @@ export class Strategy {
    * Set up allocations for the selected markets.
    */
   initializeMarkets(rankedMarkets: RankedMarket[]): void {
+    this.tokenToConditionId.clear();
     for (const rm of rankedMarkets) {
       const yesToken = rm.market.tokens.find(t => t.outcome === 'Yes') || rm.market.tokens[0];
       const noToken = rm.market.tokens.find(t => t.outcome === 'No') || rm.market.tokens[1];
@@ -47,6 +51,9 @@ export class Strategy {
       };
 
       this.allocations.set(rm.market.conditionId, allocation);
+      // Used during exchange reconciliation to map token -> condition.
+      this.tokenToConditionId.set(yesToken.tokenId, rm.market.conditionId);
+      this.tokenToConditionId.set(noToken.tokenId, rm.market.conditionId);
       logger.info(COMPONENT, `Initialized market: ${rm.market.question.slice(0, 50)}...`);
     }
   }
@@ -133,6 +140,7 @@ export class Strategy {
   private async placeOrders(allocation: MarketAllocation, midpoint: MidpointInfo): Promise<void> {
     const spread = this.config.spreadFromMidpoint;
     const orderSize = this.config.orderSize;
+    const negRisk = Boolean(allocation.market.negRisk);
 
     // Adjust spread based on inventory skew
     const skew = this.riskManager.getInventorySkew(allocation);
@@ -141,6 +149,8 @@ export class Strategy {
     // ── YES Token Orders ──
     const yesBidPrice = midpoint.mid - spread - skewAdjustment;
     const yesAskPrice = midpoint.mid + spread + skewAdjustment;
+    const yesInventory = this.getTokenInventory(allocation, allocation.yesTokenId);
+    const noInventory = this.getTokenInventory(allocation, allocation.noTokenId);
 
     // Only place bid if price is reasonable (0.05–0.95 range)
     if (yesBidPrice >= 0.05 && yesBidPrice <= 0.95) {
@@ -148,7 +158,8 @@ export class Strategy {
         allocation.yesTokenId,
         yesBidPrice,
         orderSize,
-        'BUY'
+        'BUY',
+        negRisk
       );
       if (orderId) {
         allocation.activeOrders.push({
@@ -166,12 +177,13 @@ export class Strategy {
       }
     }
 
-    if (yesAskPrice >= 0.05 && yesAskPrice <= 0.95) {
+    if (yesAskPrice >= 0.05 && yesAskPrice <= 0.95 && yesInventory >= orderSize) {
       const orderId = await this.client.placeLimitOrder(
         allocation.yesTokenId,
         yesAskPrice,
         orderSize,
-        'SELL'
+        'SELL',
+        negRisk
       );
       if (orderId) {
         allocation.activeOrders.push({
@@ -200,7 +212,8 @@ export class Strategy {
         allocation.noTokenId,
         noBidPrice,
         orderSize,
-        'BUY'
+        'BUY',
+        negRisk
       );
       if (orderId) {
         allocation.activeOrders.push({
@@ -218,12 +231,13 @@ export class Strategy {
       }
     }
 
-    if (noAskPrice >= 0.05 && noAskPrice <= 0.95) {
+    if (noAskPrice >= 0.05 && noAskPrice <= 0.95 && noInventory >= orderSize) {
       const orderId = await this.client.placeLimitOrder(
         allocation.noTokenId,
         noAskPrice,
         orderSize,
-        'SELL'
+        'SELL',
+        negRisk
       );
       if (orderId) {
         allocation.activeOrders.push({
@@ -337,21 +351,194 @@ export class Strategy {
   }
 
   /**
+   * USDC committed in live BUY orders (synced with exchange via reconcile).
+   * SELL orders lock outcome tokens, not USDC — not included here.
+   */
+  getLiveBuyUsdcTotal(): number {
+    let sum = 0;
+    for (const [, alloc] of this.allocations) {
+      for (const o of alloc.activeOrders) {
+        if (o.status === 'LIVE' && o.side === 'BUY') sum += o.size;
+      }
+    }
+    return sum;
+  }
+
+  /**
    * Get summary stats for monitoring.
    */
   getStats(): Record<string, any> {
     let totalOrders = 0;
-    let totalCapital = 0;
+    let targetCapital = 0;
 
     for (const [, alloc] of this.allocations) {
       totalOrders += alloc.activeOrders.filter(o => o.status === 'LIVE').length;
-      totalCapital += alloc.capitalAllocated;
+      targetCapital += alloc.capitalAllocated;
     }
+
+    const liveBuyUsdc = this.getLiveBuyUsdcTotal();
 
     return {
       'Active Markets': this.allocations.size,
       'Live Orders': totalOrders,
-      'Capital Deployed': `$${totalCapital.toFixed(2)}`,
+      'Capital Deployed': `$${liveBuyUsdc.toFixed(2)}`,
+      'Target allocation (config)': `$${targetCapital.toFixed(2)}`,
     };
+  }
+
+  private updatePositionFromFill(allocation: MarketAllocation, fill: FillEvent): void {
+    const signedSize = fill.side === 'BUY' ? fill.size : -fill.size;
+    let position = allocation.positions.find(p => p.tokenId === fill.tokenId);
+
+    if (!position) {
+      position = {
+        conditionId: allocation.market.conditionId,
+        tokenId: fill.tokenId,
+        outcome: fill.outcome,
+        size: 0,
+        averagePrice: fill.price,
+        currentPrice: allocation.midpoint?.mid ?? fill.price,
+        unrealizedPnl: 0,
+      };
+      allocation.positions.push(position);
+    }
+
+    const prevSize = position.size;
+    const nextSize = prevSize + signedSize;
+
+    if (nextSize === 0) {
+      position.size = 0;
+      position.unrealizedPnl = 0;
+      position.currentPrice = allocation.midpoint?.mid ?? fill.price;
+      return;
+    }
+
+    if ((prevSize >= 0 && signedSize >= 0) || (prevSize <= 0 && signedSize <= 0) || prevSize === 0) {
+      const weightedNotional = (Math.abs(prevSize) * position.averagePrice) + (Math.abs(signedSize) * fill.price);
+      position.averagePrice = weightedNotional / Math.abs(nextSize);
+    }
+
+    position.size = nextSize;
+    position.currentPrice = allocation.midpoint?.mid ?? fill.price;
+    position.unrealizedPnl = (position.currentPrice - position.averagePrice) * position.size;
+  }
+
+  async reconcileWithExchange(force: boolean = false): Promise<void> {
+    const now = Date.now();
+    if (!force && now - this.lastReconcileAt < this.reconcileIntervalMs) return;
+    this.lastReconcileAt = now;
+
+    try {
+      await this.reconcileOpenOrders();
+      await this.reconcilePositions();
+      this.syncUnrealizedPnl();
+    } catch (err: any) {
+      logger.warn(COMPONENT, `State reconciliation failed: ${err.message}`);
+    }
+  }
+
+  private async reconcileOpenOrders(): Promise<void> {
+    const remoteOpenOrders = await this.client.getOpenOrders();
+    const remoteById = new Map<string, any>();
+    for (const raw of remoteOpenOrders) {
+      const id = String(raw.orderID || raw.id || raw.orderId || '');
+      if (!id) continue;
+      remoteById.set(id, raw);
+    }
+    const remoteIds = new Set<string>(
+      Array.from(remoteById.keys())
+    );
+
+    for (const [, allocation] of this.allocations) {
+      for (const order of allocation.activeOrders) {
+        if (order.status === 'LIVE') {
+          const remote = remoteById.get(order.orderId);
+          if (remote) {
+            const sizeMatched = this.toNumber(
+              remote.sizeMatched ?? remote.size_matched ?? remote.filled_size ?? remote.filledSize,
+              order.sizeMatched
+            );
+            order.sizeMatched = Math.min(order.size, Math.max(order.sizeMatched, sizeMatched));
+          }
+        }
+
+        if (order.status === 'LIVE' && !remoteIds.has(order.orderId)) {
+          order.status = order.sizeMatched > 0 ? 'MATCHED' : 'CANCELLED';
+        }
+      }
+    }
+  }
+
+  private async reconcilePositions(): Promise<void> {
+    const positions = await this.client.getPositions();
+    if (!Array.isArray(positions)) return;
+
+    const byCondition = new Map<string, Position[]>();
+
+    for (const raw of positions) {
+      const tokenId = String(raw.tokenId || raw.token_id || raw.asset || raw.asset_id || '');
+      const conditionIdFromPayload = String(raw.conditionId || raw.condition_id || raw.market_id || raw.marketId || '');
+      const conditionId = conditionIdFromPayload || this.tokenToConditionId.get(tokenId) || '';
+      const size = this.toNumber(raw.size ?? raw.position ?? raw.balance ?? raw.amount);
+      if (!conditionId || !tokenId || size === 0) continue;
+
+      const currentPrice = this.toNumber(raw.currentPrice ?? raw.current_price ?? raw.mark_price ?? raw.price, 0.5);
+      const averagePrice = this.toNumber(raw.averagePrice ?? raw.average_price ?? raw.avg_price ?? raw.avgPrice, currentPrice);
+      const outcome = String(raw.outcome || raw.side || this.getOutcomeForToken(conditionId, tokenId));
+
+      const parsed: Position = {
+        conditionId,
+        tokenId,
+        outcome,
+        size,
+        averagePrice,
+        currentPrice,
+        unrealizedPnl: (currentPrice - averagePrice) * size,
+      };
+
+      const existing = byCondition.get(conditionId) || [];
+      existing.push(parsed);
+      byCondition.set(conditionId, existing);
+    }
+
+    for (const [conditionId, allocation] of this.allocations) {
+      allocation.positions = byCondition.get(conditionId) || [];
+    }
+  }
+
+  private syncUnrealizedPnl(): void {
+    let totalUnrealized = 0;
+    for (const [, allocation] of this.allocations) {
+      for (const pos of allocation.positions) {
+        if (allocation.midpoint) {
+          if (pos.tokenId === allocation.yesTokenId) {
+            pos.currentPrice = allocation.midpoint.mid;
+          } else if (pos.tokenId === allocation.noTokenId) {
+            pos.currentPrice = 1 - allocation.midpoint.mid;
+          }
+        }
+        pos.unrealizedPnl = (pos.currentPrice - pos.averagePrice) * pos.size;
+        totalUnrealized += pos.unrealizedPnl;
+      }
+    }
+    this.riskManager.setUnrealizedPnl(totalUnrealized);
+  }
+
+  private toNumber(value: unknown, fallback: number = 0): number {
+    const n = typeof value === 'number' ? value : parseFloat(String(value ?? ''));
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  private getTokenInventory(allocation: MarketAllocation, tokenId: string): number {
+    const pos = allocation.positions.find(p => p.tokenId === tokenId);
+    return pos ? Math.max(0, pos.size) : 0;
+  }
+
+  private getOutcomeForToken(conditionId: string, tokenId: string): string {
+    const alloc = this.allocations.get(conditionId);
+    if (!alloc) return 'Unknown';
+    if (tokenId === alloc.yesTokenId) return 'Yes';
+    if (tokenId === alloc.noTokenId) return 'No';
+    return 'Unknown';
   }
 }

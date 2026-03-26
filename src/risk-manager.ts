@@ -16,6 +16,7 @@ export class RiskManager {
   private fills: FillEvent[] = [];
   private lastFillTime: number = 0;
   private killSwitchActive: boolean = false;
+  private unrealizedPnl: number = 0;
   private dayStart: number;
 
   constructor(config: BotConfig) {
@@ -161,6 +162,10 @@ export class RiskManager {
 
   getAllTimePnl(): number {
     return this.allTimePnl;
+  }
+
+  setUnrealizedPnl(unrealized: number): void {
+    this.unrealizedPnl = unrealized;
   }
 
   getFillCount(): number {

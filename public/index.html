@@ -219,10 +219,24 @@
 
           <div className="panel" style={{ padding: '20px' }}>
             <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
-              Capital Deployed
+              USDC in live BUY orders
             </div>
             <div className="metric-value" style={{ fontSize: '2rem', fontWeight: 600 }}>
               {typeof status.capitalDeployed === 'string' ? status.capitalDeployed : `$${status.capitalDeployed}`}
+            </div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.7rem', marginTop: '10px', lineHeight: 1.45 }}>
+              {status.usdcWalletBalance != null && (
+                <>Wallet USDC.e (trading addr): ${Number(status.usdcWalletBalance).toFixed(2)}<br /></>
+              )}
+              {status.tradingAddress && (
+                <>Trading: {status.tradingAddress.slice(0, 6)}…{status.tradingAddress.slice(-4)}</>
+              )}
+              {status.signerAddress && status.tradingAddress && status.signerAddress.toLowerCase() !== status.tradingAddress.toLowerCase() && (
+                <> · signer {status.signerAddress.slice(0, 6)}…{status.signerAddress.slice(-4)}</>
+              )}
+              {status.targetAllocationConfig && (
+                <><br />Config target (all markets): {status.targetAllocationConfig}</>
+              )}
             </div>
           </div>
 
@@ -297,7 +311,15 @@
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
-             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{market.liveOrders.length} Live Orders</span>
+             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                {market.liveOrders.length} live orders
+                {typeof market.capitalLiveBidUsdc === 'number' && (
+                  <> · ${market.capitalLiveBidUsdc.toFixed(2)} USDC bids</>
+                )}
+                {market.capitalTarget != null && (
+                  <> (target ${market.capitalTarget})</>
+                )}
+              </span>
              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
               Spread: <span style={{color: 'var(--text-primary)'}}>{(market.spread * 100).toFixed(1)}¢</span>
             </span>
