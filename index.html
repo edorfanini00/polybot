@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polybot Dashboard</title>
+  
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    :root {
+      --bg-color: #000000;
+      --panel-bg: #0A0A0B;
+      --border-color: #1A1A1A;
+      --border-hover: #333333;
+      --text-primary: #FFFFFF;
+      --text-secondary: #888888;
+      --accent-green: #10B981; /* Emerald */
+      --accent-green-bg: rgba(16, 185, 129, 0.1);
+      --accent-red: #EF4444; /* Red */
+      --accent-red-bg: rgba(239, 68, 68, 0.1);
+      --accent-blue: #3B82F6; /* Blue */
+      --accent-blue-bg: rgba(59, 130, 246, 0.1);
+      --font-sans: 'Inter', sans-serif;
+      --font-display: 'Space Grotesk', sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* Clean Panels */
+    .panel {
+      background: var(--panel-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      transition: border-color 0.2s ease;
+    }
+    .panel:hover { border-color: var(--border-hover); }
+
+    .pill {
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, .metric-value { 
+      font-family: var(--font-display); 
+      letter-spacing: -0.02em; 
+    }
+    
+    .text-green { color: var(--accent-green); }
+    .text-red { color: var(--accent-red); }
+    .text-blue { color: var(--accent-blue); }
+
+    #root { 
+      display: flex; 
+      flex-direction: column; 
+      min-height: 100vh; 
+      padding: 2.5rem; 
+      max-width: 1400px; 
+      margin: 0 auto; 
+    }
+    
+    .grid-5 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+    
+    button { 
+      font-family: var(--font-sans); 
+      border: none;
+      outline: none;
+    }
+    
+    /* Clean pulse for live indicator */
+    @keyframes pulse-dot {
+      0% { opacity: 1; }
+      50% { opacity: 0.4; }
+      100% { opacity: 1; }
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--accent-green);
+      animation: pulse-dot 2s infinite ease-in-out;
+    }
+    .status-dot.paused {
+      background-color: var(--accent-red);
+      animation: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // --- Components ---
+
+    function KillSwitch({ active, onToggle }) {
+      const [loading, setLoading] = useState(false);
+
+      const handleToggle = async () => {
+        setLoading(true);
+        await onToggle(!active);
+        setLoading(false);
+      };
+
+      return (
+        <div className="panel" style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '32px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ 
+              width: '40px', height: '40px', borderRadius: '8px', 
+              background: active ? 'var(--accent-red-bg)' : 'var(--accent-green-bg)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: active ? 'var(--accent-red)' : 'var(--accent-green)',
+            }}>
+              <i data-lucide={active ? "shield-alert" : "shield-check"} style={{ width: 20, height: 20 }}></i>
+            </div>
+            <div>
+              <h3 style={{ fontSize: '1rem', marginBottom: '2px', fontWeight: 600 }}>Risk Manager</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                {active ? 'Trading suspended. All orders cancelled.' : 'System active and protecting capital.'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleToggle}
+            disabled={loading}
+            style={{
+              background: active ? 'var(--text-primary)' : 'var(--accent-red)',
+              color: active ? '#000' : '#fff',
+              padding: '10px 20px',
+              borderRadius: '6px',
+              fontSize: '0.85rem',
+              fontWeight: 500,
+              cursor: loading ? 'wait' : 'pointer',
+              transition: 'all 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            {loading ? 'Processing...' : active ? 'Resume Trading' : 'Engage Kill Switch'}
+          </button>
+        </div>
+      );
+    }
+
+    function StatsOverview({ status }) {
+      if (!status) return null;
+
+      const formatUptime = (ms) => {
+        const hours = Math.floor(ms / 3600000);
+        const minutes = Math.floor((ms % 3600000) / 60000);
+        return `${hours}h ${minutes}m`;
+      };
+
+      const isDailyPositive = status.dailyPnl >= 0;
+      const isAllTimePositive = (status.allTimePnl || 0) >= 0;
+
+      return (
+        <div className="grid-5" style={{ marginBottom: '32px' }}>
+          <div className="panel" style={{ padding: '20px' }}>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+              Daily P&L
+            </div>
+            <div className={`metric-value ${isDailyPositive ? 'text-green' : 'text-red'}`} style={{ fontSize: '2rem', fontWeight: 600 }}>
+              {isDailyPositive ? '+' : '-'}${Math.abs(status.dailyPnl).toFixed(2)}
+            </div>
+          </div>
+
+          <div className="panel" style={{ padding: '20px' }}>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+              All-Time P&L
+            </div>
+            <div className={`metric-value ${isAllTimePositive ? 'text-green' : 'text-red'}`} style={{ fontSize: '2rem', fontWeight: 600 }}>
+              {isAllTimePositive ? '+' : '-'}${Math.abs(status.allTimePnl || 0).toFixed(2)}
+            </div>
+          </div>
+
+          <div className="panel" style={{ padding: '20px' }}>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+              Active Markets
+            </div>
+            <div className="metric-value" style={{ fontSize: '2rem', fontWeight: 600 }}>
+              {status.activeMarkets}
+            </div>
+          </div>
+
+          <div className="panel" style={{ padding: '20px' }}>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+              Capital Deployed
+            </div>
+            <div className="metric-value" style={{ fontSize: '2rem', fontWeight: 600 }}>
+              {typeof status.capitalDeployed === 'string' ? status.capitalDeployed : `$${status.capitalDeployed}`}
+            </div>
+          </div>
+
+          <div className="panel" style={{ padding: '20px' }}>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+              Uptime
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <div className="metric-value" style={{ fontSize: '1.5rem', fontWeight: 600, lineHeight: 1 }}>
+                {formatUptime(status.uptime)}
+              </div>
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginTop: '6px' }}>
+                {status.liveOrders} live orders • {status.fillsToday} fills today
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function MarketCard({ market }) {
+      const isSkewed = market.inventorySkew > 0.6;
+      
+      return (
+        <div className="panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
+            <h3 style={{ fontSize: '1rem', lineHeight: '1.4', margin: 0, fontWeight: 500 }}>{market.question}</h3>
+            {market.paused ? (
+              <span className="pill text-red" style={{ background: 'var(--accent-red-bg)' }}>Paused</span>
+            ) : (
+              <span className="pill text-blue" style={{ background: 'var(--accent-blue-bg)' }}>Active</span>
+            )}
+          </div>
+
+          <div className="grid-2">
+            <div>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Reward Pool</p>
+              <p style={{ fontSize: '1.25rem', fontWeight: 500 }}>
+                ${market.rewardPool ? market.rewardPool.toFixed(2) : '0.00'}<span style={{fontSize: '0.75rem', color: 'var(--text-secondary)'}}>/day</span>
+              </p>
+            </div>
+            <div>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Midpoint</p>
+              <p style={{ fontSize: '1.25rem', fontWeight: 500 }}>
+                ${market.midpoint ? market.midpoint.toFixed(3) : '0.000'}
+              </p>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Inventory Skew</span>
+              {isSkewed && <span style={{ fontSize: '0.75rem', color: 'var(--accent-red)' }}>High Skew</span>}
+            </div>
+            
+            <div style={{ width: '100%', height: '4px', background: '#222', borderRadius: '2px', position: 'relative', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', top: 0, bottom: 0, left: '50%', width: '1px', background: '#444', zIndex: 2 }}></div>
+              <div style={{
+                position: 'absolute', top: 0, bottom: 0,
+                left: market.netInventory < 0 ? `${50 - (market.inventorySkew * 50)}%` : '50%',
+                width: `${market.inventorySkew * 50}%`,
+                background: isSkewed ? 'var(--accent-red)' : 'var(--text-primary)',
+                transition: 'all 0.3s ease'
+              }}></div>
+            </div>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              <span>Long NO</span>
+              <span style={{color: 'var(--text-primary)'}}>{market.netInventory > 0 ? `+${market.netInventory} YES` : market.netInventory < 0 ? `${market.netInventory} NO` : 'Balanced'}</span>
+              <span>Long YES</span>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{market.liveOrders.length} Live Orders</span>
+             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+              Spread: <span style={{color: 'var(--text-primary)'}}>{(market.spread * 100).toFixed(1)}¢</span>
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    function ActivityFeed({ activity }) {
+      if (!activity || activity.length === 0) return null;
+
+      const typeColors = {
+        fill: 'var(--accent-green)',
+        order: 'var(--accent-blue)',
+        discovery: '#A855F7',
+        alert: 'var(--accent-red)',
+        system: 'var(--text-secondary)',
+      };
+      const typeLabels = { fill: 'FILL', order: 'ORDER', discovery: 'SCAN', alert: 'ALERT', system: 'SYS' };
+
+      const timeAgo = (ts) => {
+        const s = Math.floor((Date.now() - ts) / 1000);
+        if (s < 60) return `${s}s ago`;
+        if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+        return `${Math.floor(s / 3600)}h ago`;
+      };
+
+      return (
+        <div style={{ marginTop: '32px' }}>
+          <h2 style={{ fontSize: '1rem', marginBottom: '16px', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            Live Activity
+          </h2>
+          <div className="panel" style={{ padding: '4px 0', maxHeight: '360px', overflowY: 'auto' }}>
+            {activity.map(event => (
+              <div key={event.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 20px', borderBottom: '1px solid var(--border-color)' }}>
+                <span style={{
+                  fontSize: '0.65rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px',
+                  color: typeColors[event.type] || '#888', minWidth: '42px'
+                }}>
+                  {typeLabels[event.type] || event.type}
+                </span>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)', flex: 1 }}>
+                  {event.message}
+                </span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                  {timeAgo(event.time)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // --- Main App ---
+
+    function App() {
+      const [status, setStatus] = useState(null);
+      const [markets, setMarkets] = useState([]);
+      const [activity, setActivity] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+
+      const fetchData = async () => {
+        try {
+          const [statusRes, marketsRes, activityRes] = await Promise.all([
+            fetch('/api/status'),
+            fetch('/api/markets'),
+            fetch('/api/activity').catch(() => null)
+          ]);
+          
+          if (!statusRes.ok || !marketsRes.ok) throw new Error('API Error');
+          
+          const statusData = await statusRes.json();
+          const marketsData = await marketsRes.json();
+          const activityData = activityRes && activityRes.ok ? await activityRes.json() : [];
+          
+          setStatus(statusData);
+          setMarkets(marketsData);
+          setActivity(activityData);
+          setError(null);
+        } catch (err) {
+          console.error(err);
+          setError('Connection to node lost. Is the engine running?');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      useEffect(() => {
+        fetchData();
+        const interval = setInterval(fetchData, 3000);
+        return () => clearInterval(interval);
+      }, []);
+
+      useEffect(() => {
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      }); 
+
+      const toggleKillSwitch = async (activate) => {
+        try {
+          await fetch('/api/kill-switch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ activate }),
+          });
+          fetchData();
+        } catch (err) {
+          console.error('Failed to toggle kill switch', err);
+        }
+      };
+
+      if (loading && !status) {
+        return (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+            Initializing engine...
+          </div>
+        );
+      }
+
+      return (
+        <React.Fragment>
+          <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '32px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div className={`status-dot ${status?.killSwitchActive ? 'paused' : ''}`}></div>
+              <div>
+                <h1 style={{ fontSize: '1.25rem', margin: 0, fontWeight: 500, letterSpacing: '-0.5px' }}>
+                  Polybot Engine
+                </h1>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '2px' }}>
+                  {status?.mode === 'paper' ? 'Paper Trading — Simulated fills, real market data' : 'Live Trading — Real orders on Polymarket'}
+                </p>
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              {status?.mode === 'paper' && (
+                <div className="pill" style={{ background: 'rgba(59, 130, 246, 0.15)', color: 'var(--accent-blue)', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+                  📄 Paper Trading
+                </div>
+              )}
+              {status?.mode === 'live' && !status?.isDryRun && (
+                <div className="pill" style={{ background: 'var(--accent-green-bg)', color: 'var(--accent-green)', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+                  ⚡ Live
+                </div>
+              )}
+              {status?.isDryRun && status?.mode !== 'paper' && (
+                <div className="pill" style={{ background: 'rgba(255, 255, 255, 0.1)', color: 'var(--text-primary)', border: '1px solid #333' }}>
+                  Dry Run Mode
+                </div>
+              )}
+            </div>
+          </header>
+
+          {error ? (
+            <div className="panel" style={{ padding: '24px', textAlign: 'center', color: 'var(--accent-red)', borderColor: 'var(--accent-red-bg)' }}>
+              <p style={{ fontSize: '0.9rem' }}>{error}</p>
+            </div>
+          ) : (
+            <main>
+              <StatsOverview status={status} />
+              <KillSwitch active={status?.killSwitchActive || false} onToggle={toggleKillSwitch} />
+
+              <h2 style={{ fontSize: '1rem', marginBottom: '16px', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Active Markets ({markets.length})
+              </h2>
+              
+              <div className="grid-cards">
+                {markets.map(market => (
+                  <MarketCard key={market.id} market={market} />
+                ))}
+                {markets.length === 0 && (
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', padding: '20px 0' }}>No active markets currently being farmed.</p>
+                )}
+              </div>
+
+              <ActivityFeed activity={activity} />
+            </main>
+          )}
+        </React.Fragment>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
