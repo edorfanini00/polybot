@@ -48,7 +48,8 @@ export class PolymarketClient {
     const tempClient = new ClobClient(
       this.config.clobApiHost,
       this.config.chainId,
-      this.wallet as any
+      // clob-client expects an ethers v5-style signer with `_signTypedData`
+      this.clobSigner as any
     );
 
     // Step 2: Derive API credentials using EIP-712 signature
@@ -129,13 +130,28 @@ export class PolymarketClient {
   async getMarketById(conditionId: string): Promise<any> {
     try {
       const response = await fetch(
-        `${this.config.gammaApiHost}/markets?id=${conditionId}`
+        // Gamma expects `condition_id` (not `id`) for conditional market identifiers.
+        `${this.config.gammaApiHost}/markets?condition_id=${conditionId}`
       );
       if (!response.ok) throw new Error(`Gamma API error: ${response.status}`);
       const data = (await response.json()) as any[];
       return data[0] || null;
     } catch (err: any) {
       logger.error(COMPONENT, `Failed to fetch market ${conditionId}: ${err.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch the market and its outcome tokens directly from the CLOB layer.
+   * This yields `token_id`s that are compatible with `getOrderBook(tokenId)`.
+   */
+  async getClobMarket(conditionId: string): Promise<any | null> {
+    try {
+      const m = await this.client.getMarket(conditionId);
+      return m || null;
+    } catch (err: any) {
+      logger.error(COMPONENT, `Failed to fetch CLOB market ${conditionId}: ${err?.message || err}`);
       return null;
     }
   }
@@ -213,10 +229,14 @@ export class PolymarketClient {
   }
 
   getMidpoint(book: OrderBook): MidpointInfo | null {
-    if (!book.bids.length || !book.asks.length) return null;
+    // Some API responses for invalid/unavailable token ids may return
+    // an object without `bids`/`asks` arrays. Be defensive here.
+    if (!book) return null;
+    if (!Array.isArray((book as any).bids) || !Array.isArray((book as any).asks)) return null;
+    if ((book as any).bids.length === 0 || (book as any).asks.length === 0) return null;
 
-    const bestBid = parseFloat(book.bids[0].price);
-    const bestAsk = parseFloat(book.asks[0].price);
+    const bestBid = parseFloat((book as any).bids[0].price);
+    const bestAsk = parseFloat((book as any).asks[0].price);
     const mid = (bestBid + bestAsk) / 2;
     const spread = bestAsk - bestBid;
 
@@ -230,6 +250,14 @@ export class PolymarketClient {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Whether a specific conditional outcome token uses the neg-risk exchange adapter.
+   * This must be determined per tokenId (NOT per Gamma market).
+   */
+  async getNegRisk(tokenId: string): Promise<boolean> {
+    return this.client.getNegRisk(tokenId);
   }
 
   // ── Order Management ──────────────────────────
@@ -254,13 +282,12 @@ export class PolymarketClient {
       // Clamp price between 0.01 and 0.99
       const clampedPrice = Math.max(0.01, Math.min(0.99, roundedPrice));
 
-      const sideEnum = side === 'BUY' ? 0 : 1; // BUY=0, SELL=1 in the SDK
-      
       const order = await this.client.createAndPostOrder({
         tokenID: tokenId,
         price: clampedPrice,
         size: size,
-        side: sideEnum as any,
+        // clob-client expects Side values as strings: "BUY" | "SELL"
+        side: side as any,
       }, {
         tickSize: '0.01',
         negRisk: negRisk,

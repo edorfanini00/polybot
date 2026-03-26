@@ -10,7 +10,8 @@
     "paper": "npx tsx src/paper-trader.ts",
     "dashboard": "npx tsx src/serve-dashboard.ts",
     "test:connection": "npx tsx src/test-connection.ts",
-    "test:discovery": "npx tsx src/test-discovery.ts"
+    "test:discovery": "npx tsx src/test-discovery.ts",
+    "test:relayer-submit": "npx tsx src/test-relayer-submit.ts"
   },
   "dependencies": {
     "@polymarket/clob-client": "^4.3.0",

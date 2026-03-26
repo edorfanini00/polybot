@@ -83,6 +83,44 @@ class Bot {
         process.exit(1);
       }
 
+      // ── Step 4.5: Cap markets by available USDC ──
+      // The strategy places TWO BUY orders per market, each with size = config.orderSize.
+      // Those BUY orders reserve USDC collateral, so we should not deploy more than
+      // the wallet actually has.
+      const usdcBalance = await this.client.fetchUsdcBalance();
+      if (typeof usdcBalance === 'number') {
+        // Strategy config uses `CAPITAL_PER_MARKET` as the intended per-market allocation.
+        // Keep the cap aligned with that setting.
+        const perMarketUsdcRequired =
+          this.config.capitalPerMarket > 0 ? this.config.capitalPerMarket : this.config.orderSize * 2;
+        const maxAffordableMarkets = Math.floor(usdcBalance / perMarketUsdcRequired);
+
+        if (maxAffordableMarkets <= 0) {
+          logger.warn(
+            COMPONENT,
+            `Insufficient USDC balance (${usdcBalance.toFixed(2)}) to place even one market (need ~${perMarketUsdcRequired.toFixed(
+              2
+            )}). Starting with 0 markets until funds are available.`
+          );
+          bestMarkets.splice(0);
+        } else if (maxAffordableMarkets < bestMarkets.length) {
+          logger.warn(
+            COMPONENT,
+            `Capping markets by balance: have $${usdcBalance.toFixed(2)}; can afford ~${maxAffordableMarkets}/${bestMarkets.length} markets.`
+          );
+          bestMarkets.splice(maxAffordableMarkets);
+        }
+      } else {
+        logger.warn(COMPONENT, 'Could not fetch USDC balance; not capping markets by available funds.');
+      }
+
+      if (bestMarkets.length === 0) {
+        logger.warn(
+          COMPONENT,
+          'No markets left after balance capping. Bot will stay running, but no orders will be placed until balance increases.'
+        );
+      }
+
       // ── Step 5: Initialize Strategy ──
       this.strategy.initializeMarkets(bestMarkets);
 
@@ -132,10 +170,40 @@ class Bot {
         try {
           const newMarkets = await this.discovery.discoverBestMarkets();
           if (newMarkets.length > 0) {
-            // Cancel all existing, reinitialize with new selection
-            await this.strategy.cancelAllOrders();
-            this.strategy.initializeMarkets(newMarkets);
-            logger.info(COMPONENT, `Switched to ${newMarkets.length} new markets`);
+            // Cancel all existing, reinitialize with new selection (but cap by USDC balance)
+            const usdcBalance = await this.client.fetchUsdcBalance();
+            let cappedMarkets = newMarkets;
+
+            if (typeof usdcBalance === 'number') {
+              const perMarketUsdcRequired =
+                this.config.capitalPerMarket > 0 ? this.config.capitalPerMarket : this.config.orderSize * 2;
+              const maxAffordableMarkets = Math.floor(usdcBalance / perMarketUsdcRequired);
+
+              if (maxAffordableMarkets <= 0) {
+                cappedMarkets = [];
+                logger.warn(
+                  COMPONENT,
+                  `USDC balance is too low (${usdcBalance.toFixed(2)}) for new markets; staying at 0 markets.`
+                );
+              } else if (maxAffordableMarkets < newMarkets.length) {
+                cappedMarkets = newMarkets.slice(0, maxAffordableMarkets);
+                logger.warn(
+                  COMPONENT,
+                  `Capping rediscovered markets by balance: have $${usdcBalance.toFixed(2)}; can afford ~${maxAffordableMarkets}/${newMarkets.length} markets.`
+                );
+              }
+            } else {
+              logger.warn(COMPONENT, 'Could not fetch USDC balance during rediscovery; skipping balance cap.');
+            }
+
+            if (cappedMarkets.length > 0) {
+              await this.strategy.cancelAllOrders();
+              this.strategy.initializeMarkets(cappedMarkets);
+              logger.info(COMPONENT, `Switched to ${cappedMarkets.length} new markets`);
+            } else {
+              // Keep current state (or none) if we can't afford the selection.
+              logger.warn(COMPONENT, 'No affordable markets after balance capping. Not switching.');
+            }
           }
         } catch (err: any) {
           logger.error(COMPONENT, `Market rediscovery error: ${err.message}`);

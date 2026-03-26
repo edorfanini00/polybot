@@ -53,13 +53,26 @@ export class MarketDiscovery {
       try {
         // Fetch market details from Gamma API
         const marketData = await this.client.getMarketById(reward.conditionId);
-        if (!marketData || marketData.closed || !marketData.active) {
+        // Gamma's `closed` flag can be true even when the market is still live/tradable
+        // for F-PMM reward farming. Prefer `fpmmLive` when present.
+        if (!marketData || !marketData.active || marketData.fpmmLive === false) {
           continue;
         }
 
-        // Parse tokens
-        const tokens = this.parseTokens(marketData);
+        // IMPORTANT: Derive tradable token IDs from the CLOB layer.
+        // Gamma's `clobTokenIds` may not correspond to active orderbooks on the CLOB.
+        const clobMarket = await this.client.getClobMarket(reward.conditionId);
+
+        // Parse tokens (and remap them to internal 'Yes'/'No' outcomes).
+        const tokens = this.parseTokens(clobMarket || marketData);
         if (tokens.length < 2) continue;
+
+        const yesToken = tokens.find(t => t.outcome === 'Yes') || tokens[0];
+        const noToken = tokens.find(t => t.outcome === 'No') || tokens[1];
+
+        // negRisk must be determined per tokenId (NOT from Gamma marketData),
+        // otherwise CLOB rejects orders with `invalid signature`.
+        const negRisk = await this.client.getNegRisk(yesToken.tokenId);
 
         const market: Market = {
           conditionId: reward.conditionId,
@@ -68,7 +81,7 @@ export class MarketDiscovery {
           slug: marketData.slug || '',
           active: true,
           closed: false,
-          negRisk: Boolean(marketData.neg_risk ?? marketData.negRisk),
+          negRisk,
           tokens,
           rewardPool: reward.rewardsDaily,
           tags: marketData.tags || [],
@@ -76,9 +89,11 @@ export class MarketDiscovery {
         };
 
         // Get order book for the YES token to assess competition
-        const yesToken = tokens.find(t => t.outcome === 'Yes') || tokens[0];
         const book = await this.client.getOrderBook(yesToken.tokenId);
         const midpoint = book ? this.client.getMidpoint(book) : null;
+        // If we can't compute a midpoint, the orderbook data isn't usable,
+        // so the strategy won't be able to place/refresh orders for this market.
+        if (!midpoint) continue;
 
         // Calculate competition score (total depth near midpoint)
         const competitionScore = this.calculateCompetition(book, midpoint);
@@ -202,12 +217,29 @@ export class MarketDiscovery {
 
     // Handle different API response formats
     if (marketData.tokens && Array.isArray(marketData.tokens)) {
-      for (const t of marketData.tokens) {
-        tokens.push({
-          tokenId: t.token_id || t.tokenId || '',
-          outcome: t.outcome || 'Unknown',
-          price: parseFloat(t.price || '0.5'),
-        });
+      const rawTokens = marketData.tokens.map((t: any) => ({
+        tokenId: t.token_id || t.tokenId || '',
+        outcome: t.outcome || 'Unknown',
+        price: parseFloat(t.price ?? '0.5'),
+      }));
+
+      // If the CLOB provides non-binary labels (e.g. Over/Under),
+      // map the first token to 'Yes' and the second token to 'No'.
+      const hasExplicitYesNo = rawTokens.some(
+        (t: any) => t.outcome === 'Yes' || t.outcome === 'No'
+      );
+
+      if (rawTokens.length >= 2 && !hasExplicitYesNo) {
+        tokens.push({ tokenId: rawTokens[0].tokenId, outcome: 'Yes', price: rawTokens[0].price });
+        tokens.push({ tokenId: rawTokens[1].tokenId, outcome: 'No', price: rawTokens[1].price });
+      } else {
+        for (const t of rawTokens) {
+          tokens.push({
+            tokenId: t.tokenId,
+            outcome: t.outcome,
+            price: t.price,
+          });
+        }
       }
     } else if (marketData.clobTokenIds) {
       // Alternative format with separate token IDs
