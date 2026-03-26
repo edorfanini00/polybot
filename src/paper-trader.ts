@@ -45,6 +45,13 @@ interface PaperMarket {
 
 // ── State ──
 
+interface ActivityEvent {
+  id: number;
+  time: number;
+  type: 'fill' | 'order' | 'discovery' | 'alert' | 'system';
+  message: string;
+}
+
 let markets: PaperMarket[] = [];
 let dailyPnl = 0;
 let allTimePnl = 0;
@@ -52,6 +59,14 @@ let totalFills = 0;
 let killSwitchActive = false;
 const startedAt = Date.now();
 let orderId = 0;
+let eventId = 0;
+const activityLog: ActivityEvent[] = [];
+const MAX_LOG = 100;
+
+function logActivity(type: ActivityEvent['type'], message: string) {
+  activityLog.unshift({ id: ++eventId, time: Date.now(), type, message });
+  if (activityLog.length > MAX_LOG) activityLog.length = MAX_LOG;
+}
 
 // ── Market Discovery ──
 
@@ -75,6 +90,7 @@ async function discoverMarkets(): Promise<void> {
       .slice(0, MAX_MARKETS);
 
     console.log(`[Discovery] Found ${data.length} reward markets, picking top ${ranked.length}`);
+    logActivity('discovery', `Scanned ${data.length} reward markets, selecting top ${ranked.length}`);
 
     const newMarkets: PaperMarket[] = [];
 
@@ -117,6 +133,7 @@ async function discoverMarkets(): Promise<void> {
         });
 
         console.log(`  ✓ ${m.question?.slice(0, 60)} — $${r.daily.toFixed(0)}/day`);
+        logActivity('discovery', `Added: ${m.question?.slice(0, 50)} ($${r.daily.toFixed(0)}/day)`);
       } catch {}
 
       await new Promise(r => setTimeout(r, 300));
@@ -168,7 +185,11 @@ function strategyTick(): void {
       totalFills++;
       filledOrders.push(order);
 
+      const pnlStr = order.side === 'BUY'
+        ? `+$${((market.midpoint - order.price) * order.size).toFixed(2)}`
+        : `+$${((order.price - market.midpoint) * order.size).toFixed(2)}`;
       console.log(`  [Fill] ${order.side} ${order.size} ${order.outcome} @ $${order.price.toFixed(3)} on "${market.question.slice(0, 40)}..."`);
+      logActivity('fill', `${order.side} ${order.size} ${order.outcome} @ $${order.price.toFixed(3)} — ${pnlStr} | ${market.question.slice(0, 35)}`);
     }
 
     // Remove filled orders
@@ -190,6 +211,7 @@ function strategyTick(): void {
         size: ORDER_SIZE,
         placedAt: Date.now(),
       });
+      logActivity('order', `Placed BUY ${ORDER_SIZE} Yes @ $${(market.midpoint - SPREAD - skewAdj).toFixed(3)} | ${market.question.slice(0, 35)}`);
     }
 
     if (sellOrders.length === 0 && Math.abs(market.inventory) < 200) {
@@ -201,6 +223,7 @@ function strategyTick(): void {
         size: ORDER_SIZE,
         placedAt: Date.now(),
       });
+      logActivity('order', `Placed SELL ${ORDER_SIZE} Yes @ $${(market.midpoint + SPREAD + skewAdj).toFixed(3)} | ${market.question.slice(0, 35)}`);
     }
   }
 }
@@ -250,6 +273,10 @@ function startServer(): void {
       })),
       fills: [],
     })));
+  });
+
+  app.get('/api/activity', (_req, res) => {
+    res.json(activityLog.slice(0, 50));
   });
 
   app.post('/api/kill-switch', (req, res) => {

@@ -306,28 +306,78 @@
       );
     }
 
+    function ActivityFeed({ activity }) {
+      if (!activity || activity.length === 0) return null;
+
+      const typeColors = {
+        fill: 'var(--accent-green)',
+        order: 'var(--accent-blue)',
+        discovery: '#A855F7',
+        alert: 'var(--accent-red)',
+        system: 'var(--text-secondary)',
+      };
+      const typeLabels = { fill: 'FILL', order: 'ORDER', discovery: 'SCAN', alert: 'ALERT', system: 'SYS' };
+
+      const timeAgo = (ts) => {
+        const s = Math.floor((Date.now() - ts) / 1000);
+        if (s < 60) return `${s}s ago`;
+        if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+        return `${Math.floor(s / 3600)}h ago`;
+      };
+
+      return (
+        <div style={{ marginTop: '32px' }}>
+          <h2 style={{ fontSize: '1rem', marginBottom: '16px', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            Live Activity
+          </h2>
+          <div className="panel" style={{ padding: '4px 0', maxHeight: '360px', overflowY: 'auto' }}>
+            {activity.map(event => (
+              <div key={event.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 20px', borderBottom: '1px solid var(--border-color)' }}>
+                <span style={{
+                  fontSize: '0.65rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px',
+                  color: typeColors[event.type] || '#888', minWidth: '42px'
+                }}>
+                  {typeLabels[event.type] || event.type}
+                </span>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)', flex: 1 }}>
+                  {event.message}
+                </span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                  {timeAgo(event.time)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     // --- Main App ---
 
     function App() {
       const [status, setStatus] = useState(null);
       const [markets, setMarkets] = useState([]);
+      const [activity, setActivity] = useState([]);
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState(null);
 
       const fetchData = async () => {
         try {
-          const [statusRes, marketsRes] = await Promise.all([
+          const [statusRes, marketsRes, activityRes] = await Promise.all([
             fetch('/api/status'),
-            fetch('/api/markets')
+            fetch('/api/markets'),
+            fetch('/api/activity').catch(() => null)
           ]);
           
           if (!statusRes.ok || !marketsRes.ok) throw new Error('API Error');
           
           const statusData = await statusRes.json();
           const marketsData = await marketsRes.json();
+          const activityData = activityRes && activityRes.ok ? await activityRes.json() : [];
           
           setStatus(statusData);
           setMarkets(marketsData);
+          setActivity(activityData);
           setError(null);
         } catch (err) {
           console.error(err);
@@ -425,6 +475,8 @@
                   <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', padding: '20px 0' }}>No active markets currently being farmed.</p>
                 )}
               </div>
+
+              <ActivityFeed activity={activity} />
             </main>
           )}
         </React.Fragment>
