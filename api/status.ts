@@ -1,9 +1,4 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-
-const startedAt = Date.now();
-
-export default async function handler(_req: VercelRequest, res: VercelResponse) {
-  // Count active reward markets from Polymarket
+export default async function handler(req: any, res: any) {
   let activeMarkets = 0;
   let totalRewardPool = 0;
 
@@ -24,12 +19,12 @@ export default async function handler(_req: VercelRequest, res: VercelResponse) 
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.json({
     mode: 'paper',
-    uptime: Date.now() - startedAt,
+    uptime: 0,
     isDryRun: true,
     activeMarkets,
     liveOrders: activeMarkets * 2,
     capitalDeployed: `$${(activeMarkets * 500).toLocaleString()}`,
-    dailyPnl: +(totalRewardPool * 0.02).toFixed(2),  // Estimated daily from spread
+    dailyPnl: +(totalRewardPool * 0.02).toFixed(2),
     allTimePnl: +(totalRewardPool * 0.02).toFixed(2),
     killSwitchActive: false,
     fillsToday: 0,

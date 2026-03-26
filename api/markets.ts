@@ -1,10 +1,7 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-
-export default async function handler(_req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: any, res: any) {
   let markets: any[] = [];
 
   try {
-    // Fetch reward markets
     const rewardsRes = await fetch('https://clob.polymarket.com/rewards/markets/current');
     if (!rewardsRes.ok) throw new Error('Rewards API failed');
 
@@ -20,7 +17,6 @@ export default async function handler(_req: VercelRequest, res: VercelResponse) 
       .sort((a: any, b: any) => b.daily - a.daily)
       .slice(0, 5);
 
-    // Enrich with Gamma API
     for (const r of top5) {
       try {
         const mRes = await fetch(`https://gamma-api.polymarket.com/markets?condition_id=${r.conditionId}`);
@@ -29,7 +25,6 @@ export default async function handler(_req: VercelRequest, res: VercelResponse) 
         const m = mData[0];
         if (!m) continue;
 
-        // Fetch midpoint
         let midpoint = 0.5;
         try {
           const tokenId = m.clobTokenIds?.[0] || '';
